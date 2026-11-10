@@ -463,6 +463,28 @@
         </div>
     </div>
 
+    <!-- Direct JSON Text Copy Fallback Modal -->
+    <div id="jsonCopyModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden no-print">
+        <div class="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl space-y-4">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                <h3 class="font-bold text-slate-800 text-lg flex items-center gap-2">
+                    <i data-lucide="copy" class="w-5 h-5 text-emerald-600"></i> JSONテキストの全コピー
+                </h3>
+                <button onclick="document.getElementById('jsonCopyModal').classList.add('hidden')" class="p-1 rounded-lg text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
+            </div>
+            <p class="text-xs text-slate-600">スマホで自動ダウンロードがブロックされたため、下のボタンを押してデータをコピーし、メールやメモ帳に貼り付けてPCへ送信してください。</p>
+            <textarea id="jsonCopyTextarea" readonly class="w-full h-48 p-3 bg-slate-900 text-emerald-400 font-mono text-xs rounded-xl border border-slate-700 focus:outline-none"></textarea>
+            <div class="flex justify-end gap-2 pt-1">
+                <button onclick="copyJsonTextToClipboard()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-sm transition">
+                    <i data-lucide="clipboard-copy" class="w-5 h-5"></i>
+                    <span>クリップボードに全コピー</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Export Menu Modal -->
     <div id="exportModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden no-print">
         <div class="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4">
@@ -478,9 +500,9 @@
             <div class="space-y-2 pt-2">
                 <label class="w-full py-3 px-4 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-semibold rounded-xl flex items-center justify-between transition cursor-pointer">
                     <span class="flex items-center gap-2">
-                        <i data-lucide="upload" class="w-5 h-5"></i> スマホデータ読込 (JSON)
+                        <i data-lucide="upload" class="w-5 h-5"></i> スマホデータ読込 (JSON/テキスト)
                     </span>
-                    <input type="file" id="jsonImportInput" accept=".json" class="hidden" onchange="importJSON(event)">
+                    <input type="file" id="jsonImportInput" accept=".json,.txt" class="hidden" onchange="importJSON(event)">
                     <i data-lucide="chevron-right" class="w-5 h-5 opacity-70"></i>
                 </label>
                 <button onclick="exportCSV()" class="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl flex items-center justify-between transition">
@@ -1423,16 +1445,72 @@
                 return;
             }
 
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(records, null, 2));
-            const downloadAnchor = document.createElement('a');
-            downloadAnchor.setAttribute("href", dataStr);
-            downloadAnchor.setAttribute("download", `棚卸写真エビデンスバックアップ_${new Date().toISOString().slice(0,10)}.json`);
-            document.body.appendChild(downloadAnchor);
-            downloadAnchor.click();
-            downloadAnchor.remove();
+            const fileName = `棚卸写真エビデンスバックアップ_${new Date().toISOString().slice(0,10)}.json`;
+            const jsonString = JSON.stringify(records, null, 2);
 
+            // 1. スマホ標準の共有・ファイル保存ダイアログ（Web Share API）を試行
+            if (navigator.share) {
+                try {
+                    const blob = new Blob([jsonString], { type: 'application/json' });
+                    const file = new File([blob], fileName, { type: 'application/json' });
+
+                    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                        navigator.share({
+                            files: [file],
+                            title: '棚卸データバックアップ',
+                            text: '棚卸写真エビデンスのバックアップJSONデータです。'
+                        }).then(() => {
+                            toggleExportModal();
+                            showToast("共有・保存ダイアログを起動しました");
+                        }).catch(err => {
+                            if (err.name !== 'AbortError') {
+                                showJsonCopyModal(jsonString);
+                            }
+                        });
+                        return;
+                    }
+                } catch (e) {
+                    console.log("Web Share API file share unsupported");
+                }
+            }
+
+            // 2. ブラウザダウンロードを試行
+            try {
+                const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 100);
+
+                toggleExportModal();
+                showToast("JSON保存を試行しました。保存されない場合は全コピー機能をお試しください");
+            } catch (err) {
+                showJsonCopyModal(jsonString);
+            }
+        }
+
+        function showJsonCopyModal(jsonString) {
             toggleExportModal();
-            showToast("JSONデータを出力しました");
+            const textarea = document.getElementById('jsonCopyTextarea');
+            const modal = document.getElementById('jsonCopyModal');
+            textarea.value = jsonString;
+            modal.classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function copyJsonTextToClipboard() {
+            const textarea = document.getElementById('jsonCopyTextarea');
+            textarea.select();
+            textarea.setSelectionRange(0, 999999);
+            document.execCommand('copy');
+            showToast("JSONテキストをクリップボードにコピーしました");
         }
 
         function importJSON(e) {
@@ -1455,7 +1533,7 @@
                         showToast("正しい棚卸データフォーマットではありません", true);
                     }
                 } catch (err) {
-                    showToast("JSONファイルの読み込みに失敗しました", true);
+                    showToast("JSONファイルの読み込みに失敗しました（データ形式をご確認ください）", true);
                 }
             };
             reader.readAsText(file);
@@ -1503,7 +1581,7 @@
         function deleteRecord(id) {
             if (!confirm('このエビデンス記録を削除しますか？')) return;
             records = records.filter(r => r.id !== id);
-            saveRecordsToStorage();
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
             renderAlbum();
             updateCountBadge();
             showToast("削除しました");
@@ -1548,8 +1626,8 @@
 
         function buildReportPagesHtml() {
             const title = escapeHtml(document.getElementById('reportTitleInput')?.value || '棚卸・現物確認写真報告書');
-            const dept = escapeHtml(document.getElementById('reportDeptInput')?.value || '');
-            const author = escapeHtml(document.getElementById('reportAuthorInput')?.value || '');
+            const dept = escapeHtml(document.getElementById('reportDeptInput')?.value || '資産管理部');
+            const author = escapeHtml(document.getElementById('reportAuthorInput')?.value || '山田 太郎');
             const date = document.getElementById('reportDateInput')?.value || new Date().toISOString().split('T')[0];
 
             const itemsPerPage = 6;
@@ -1601,7 +1679,7 @@
                                 <p class="text-xs text-slate-500">現物確認エビデンス記録台帳 (A4 6枚配置レイアウト)</p>
                             </div>
                             <div class="text-right text-xs text-slate-600 space-y-0.5 font-mono">
-                                <div><span class="font-sans text-slate-400">部署:</span> ${dept || '-'} | <span class="font-sans text-slate-400">作成者:</span> ${author || '-'}</div>
+                                <div><span class="font-sans text-slate-400">部署:</span> ${dept} | <span class="font-sans text-slate-400">作成者:</span> ${author}</div>
                                 <div><span class="font-sans text-slate-400">発行日:</span> ${date} | <span class="font-sans text-slate-400">Page:</span> ${p + 1} / ${pageCount}</div>
                             </div>
                         </div>
