@@ -498,13 +498,12 @@
             </div>
             <p class="text-sm text-slate-600">スマホ・PC間でのバックアップ連携やExcel集計用データを出力できます。</p>
             <div class="space-y-2 pt-2">
-                <label class="w-full py-3 px-4 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-semibold rounded-xl flex items-center justify-between transition cursor-pointer">
+                <button onclick="openJsonImportDialog()" class="w-full py-3 px-4 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-semibold rounded-xl flex items-center justify-between transition">
                     <span class="flex items-center gap-2">
-                        <i data-lucide="upload" class="w-5 h-5"></i> スマホデータ読込 (JSON/テキスト)
+                        <i data-lucide="upload" class="w-5 h-5"></i> スマホデータ読込 (JSON / テキスト貼付)
                     </span>
-                    <input type="file" id="jsonImportInput" accept=".json,.txt" class="hidden" onchange="importJSON(event)">
                     <i data-lucide="chevron-right" class="w-5 h-5 opacity-70"></i>
-                </label>
+                </button>
                 <button onclick="exportCSV()" class="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl flex items-center justify-between transition">
                     <span class="flex items-center gap-2">
                         <i data-lucide="file-spreadsheet" class="w-5 h-5"></i> エビデンス台帳出力 (CSV)
@@ -513,7 +512,7 @@
                 </button>
                 <button onclick="exportJSON()" class="w-full py-3 px-4 bg-slate-700 hover:bg-slate-800 text-white font-semibold rounded-xl flex items-center justify-between transition">
                     <span class="flex items-center gap-2">
-                        <i data-lucide="code" class="w-5 h-5"></i> バックアップ出力 (JSON)
+                        <i data-lucide="code" class="w-5 h-5"></i> バックアップ出力 (JSONファイル)
                     </span>
                     <i data-lucide="chevron-right" class="w-5 h-5 opacity-70"></i>
                 </button>
@@ -522,6 +521,42 @@
                         <i data-lucide="copy" class="w-5 h-5"></i> データをテキストコピー (メール送信用)
                     </span>
                     <i data-lucide="chevron-right" class="w-5 h-5 opacity-70"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JSON Import / Paste Modal (Added for PC) -->
+    <div id="jsonImportModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden no-print">
+        <div class="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl space-y-4">
+            <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+                <h3 class="font-bold text-slate-800 text-lg flex items-center gap-2">
+                    <i data-lucide="upload" class="w-5 h-5 text-emerald-600"></i> スマホデータの読み込み
+                </h3>
+                <button onclick="document.getElementById('jsonImportModal').classList.add('hidden')" class="p-1 rounded-lg text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
+            </div>
+
+            <!-- Method A: File Upload -->
+            <div class="space-y-1">
+                <label class="block text-xs font-bold text-slate-600 uppercase">方法1: JSONファイルを選択</label>
+                <input type="file" id="jsonImportInput" accept=".json,.txt" class="w-full p-2 border border-slate-300 rounded-xl text-sm" onchange="importJSON(event)">
+            </div>
+
+            <div class="relative flex py-1 items-center">
+                <div class="flex-grow border-t border-slate-200"></div>
+                <span class="flex-shrink mx-4 text-xs font-semibold text-slate-400">または</span>
+                <div class="flex-grow border-t border-slate-200"></div>
+            </div>
+
+            <!-- Method B: Direct Paste -->
+            <div class="space-y-2">
+                <label class="block text-xs font-bold text-slate-600 uppercase">方法2: スマホからメール等で送ったテキストを直接貼り付け</label>
+                <textarea id="jsonPasteTextarea" placeholder="スマホでコピーしたJSONテキストをここに貼り付け（ペースト）してください..." class="w-full h-36 p-3 bg-slate-50 border border-slate-300 text-xs font-mono rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none"></textarea>
+                <button onclick="importJSONFromPaste()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition shadow-sm">
+                    <i data-lucide="check" class="w-5 h-5"></i>
+                    <span>貼り付けたテキストから復元</span>
                 </button>
             </div>
         </div>
@@ -1454,7 +1489,7 @@
             const fileName = `棚卸写真エビデンスバックアップ_${new Date().toISOString().slice(0,10)}.json`;
             const jsonString = JSON.stringify(records, null, 2);
 
-            // 1. スマホ標準の共有・ファイル保存ダイアログ（Web Share API）を試行
+            // Web Share API 試行（説明文を排除し、純粋なファイルオブジェクトのみ渡す）
             if (navigator.share) {
                 try {
                     const blob = new Blob([jsonString], { type: 'application/json' });
@@ -1462,12 +1497,10 @@
 
                     if (navigator.canShare && navigator.canShare({ files: [file] })) {
                         navigator.share({
-                            files: [file],
-                            title: '棚卸データバックアップ',
-                            text: '棚卸写真エビデンスのバックアップJSONデータです。'
+                            files: [file]
                         }).then(() => {
                             toggleExportModal();
-                            showToast("共有・保存ダイアログを起動しました");
+                            showToast("共有ダイアログを起動しました");
                         }).catch(err => {
                             if (err.name !== 'AbortError') {
                                 showJsonCopyModal(jsonString);
@@ -1480,7 +1513,7 @@
                 }
             }
 
-            // 2. ブラウザダウンロードを試行
+            // ブラウザ直接ダウンロード
             try {
                 const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
@@ -1496,36 +1529,41 @@
                 }, 100);
 
                 toggleExportModal();
-                showToast("JSON保存を試行しました。保存されない場合は全コピー機能をお試しください");
+                showToast("JSON保存を試行しました");
             } catch (err) {
                 showJsonCopyModal(jsonString);
             }
         }
 
-        function showJsonCopyModal(jsonString) {
+        function openJsonImportDialog() {
             toggleExportModal();
-            const textarea = document.getElementById('jsonCopyTextarea');
-            const modal = document.getElementById('jsonCopyModal');
-            textarea.value = jsonString;
-            modal.classList.remove('hidden');
+            document.getElementById('jsonImportModal').classList.remove('hidden');
             lucide.createIcons();
         }
 
-        function showJsonCopyModalDirect() {
-            if (records.length === 0) {
-                showToast("出力するデータがありません", true);
+        function importJSONFromPaste() {
+            const text = document.getElementById('jsonPasteTextarea').value.trim();
+            if (!text) {
+                showToast("テキストが入力されていません", true);
                 return;
             }
-            const jsonString = JSON.stringify(records, null, 2);
-            showJsonCopyModal(jsonString);
-        }
 
-        function copyJsonTextToClipboard() {
-            const textarea = document.getElementById('jsonCopyTextarea');
-            textarea.select();
-            textarea.setSelectionRange(0, 999999);
-            document.execCommand('copy');
-            showToast("JSONテキストをクリップボードにコピーしました");
+            try {
+                const importedRecords = JSON.parse(text);
+                if (Array.isArray(importedRecords)) {
+                    records = importedRecords;
+                    saveRecordsToStorage();
+                    updateCountBadge();
+                    renderAlbum();
+                    renderChecklist();
+                    document.getElementById('jsonImportModal').classList.add('hidden');
+                    showToast(`${records.length}件の棚卸データを読み込み・復元しました`);
+                } else {
+                    showToast("正しい棚卸データ形式ではありません", true);
+                }
+            } catch (err) {
+                showToast("貼り付けられたテキストの解析に失敗しました（JSON形式をご確認ください）", true);
+            }
         }
 
         function importJSON(e) {
@@ -1542,13 +1580,13 @@
                         updateCountBadge();
                         renderAlbum();
                         renderChecklist();
-                        toggleExportModal();
+                        document.getElementById('jsonImportModal').classList.add('hidden');
                         showToast(`${records.length}件の棚卸データを読み込み・復元しました`);
                     } else {
                         showToast("正しい棚卸データフォーマットではありません", true);
                     }
                 } catch (err) {
-                    showToast("JSONファイルの読み込みに失敗しました（データ形式をご確認ください）", true);
+                    showToast("JSONファイルの読み込みに失敗しました", true);
                 }
             };
             reader.readAsText(file);
