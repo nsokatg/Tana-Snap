@@ -18,6 +18,16 @@
             transform: scaleX(-1);
         }
 
+        /* ズーム機能用スタイル */
+        .zoom-touch-area {
+            touch-action: none;
+            cursor: grab;
+            user-select: none;
+        }
+        .zoom-touch-area:active {
+            cursor: grabbing;
+        }
+
         /* A4 印刷・PDF出力専用スタイル */
         @media print {
             body {
@@ -181,9 +191,9 @@
                 </div>
 
                 <!-- Viewport Video / Image Preview Frame -->
-                <div class="relative w-full aspect-[4/3] bg-slate-900 rounded-xl overflow-hidden shadow-inner flex items-center justify-center border border-slate-800">
-                    <video id="webcam" autoplay playsinline class="w-full h-full object-contain hidden"></video>
-                    <img id="capturedImage" class="w-full h-full object-contain hidden" alt="撮影プレビュー">
+                <div class="relative w-full aspect-[4/3] bg-slate-900 rounded-xl overflow-hidden shadow-inner flex items-center justify-center border border-slate-800 zoom-touch-area" id="cameraZoomContainer">
+                    <video id="webcam" autoplay playsinline class="w-full h-full object-contain hidden transition-transform duration-75 origin-center"></video>
+                    <img id="capturedImage" class="w-full h-full object-contain hidden transition-transform duration-75 origin-center" alt="撮影プレビュー">
                     
                     <div id="placeholderView" class="text-center p-6 space-y-3">
                         <i data-lucide="camera" class="w-12 h-12 text-slate-600 mx-auto"></i>
@@ -191,8 +201,13 @@
                     </div>
 
                     <!-- Watermark Timestamp Overlay -->
-                    <div id="timestampBadge" class="absolute bottom-2 left-2 bg-slate-900/80 text-emerald-400 font-mono text-xs px-2.5 py-1 rounded-md hidden shadow-sm">
+                    <div id="timestampBadge" class="absolute bottom-2 left-2 bg-slate-900/80 text-emerald-400 font-mono text-xs px-2.5 py-1 rounded-md hidden shadow-sm pointer-events-none">
                         <!-- Live Clock -->
+                    </div>
+
+                    <!-- Zoom Indicator Reset Badge -->
+                    <div id="cameraZoomBadge" class="absolute top-2 right-2 bg-slate-900/80 text-white font-mono text-xs px-2.5 py-1 rounded-md hidden shadow-sm cursor-pointer border border-slate-700 hover:bg-slate-800" onclick="resetCameraZoom()">
+                        1.0x (リセット)
                     </div>
 
                     <canvas id="photoCanvas" class="hidden"></canvas>
@@ -224,15 +239,20 @@
             </div>
 
             <!-- Item Details Form -->
-            <form id="recordForm" onsubmit="saveRecord(event)" class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4">
+            <form id="recordForm" onsubmit="saveRecord(event)" class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 space-y-4 zoom-touch-area relative" id="formZoomContainer">
                 <div class="flex justify-between items-center border-b border-slate-100 pb-2">
                     <h2 class="font-bold text-slate-700 flex items-center gap-2">
                         <i data-lucide="file-text" class="w-5 h-5 text-emerald-600"></i>
                         現物キャプション情報入力
                     </h2>
-                    <span id="linkedItemBadge" class="hidden text-xs font-medium px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full flex items-center gap-1">
-                        <i data-lucide="link" class="w-3.5 h-3.5"></i> リスト選択項目
-                    </span>
+                    <div class="flex items-center gap-2">
+                        <span id="formZoomBadge" class="hidden text-xs font-mono px-2.5 py-1 bg-slate-800 text-white rounded-md cursor-pointer border border-slate-700 hover:bg-slate-700" onclick="resetFormZoom()">
+                            1.0x (リセット)
+                        </span>
+                        <span id="linkedItemBadge" class="hidden text-xs font-medium px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full flex items-center gap-1">
+                            <i data-lucide="link" class="w-3.5 h-3.5"></i> リスト選択項目
+                        </span>
+                    </div>
                 </div>
 
                 <!-- Multiple Photo Gallery Preview inside Form -->
@@ -434,7 +454,8 @@
             <div class="p-4 space-y-4" id="modalContent">
                 <!-- Content generated dynamically -->
             </div>
-            <div class="p-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+            <div class="p-4 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
+                <span class="text-xs text-slate-400">※二本指で拡大・ドラッグ操作可能</span>
                 <button onclick="closeModal()" class="px-5 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium rounded-xl transition">
                     閉じる
                 </button>
@@ -495,6 +516,14 @@
         let capturedImageDataUrls = [];
         let currentTargetChecklistId = null;
 
+        // Pinch Zoom State Variables
+        let cameraZoomScale = 1;
+        let cameraZoomPan = { x: 0, y: 0 };
+        let detailZoomScale = 1;
+        let detailZoomPan = { x: 0, y: 0 };
+        let formZoomScale = 1;
+        let formZoomPan = { x: 0, y: 0 };
+
         // Initialize Lucide icons
         lucide.createIcons();
 
@@ -510,6 +539,9 @@
             const todayStr = new Date().toISOString().split('T')[0];
             document.getElementById('itemAuditDate').value = todayStr;
             document.getElementById('reportDateInput').value = todayStr;
+
+            setupPinchZoom('cameraZoomContainer', applyCameraZoomTransform);
+            setupPinchZoom('recordForm', applyFormZoomTransform);
         };
 
         // ================= RECORDS STORAGE & HELPER FUNCTIONS =================
@@ -543,6 +575,121 @@
             stopCamera();
             showToast("棚卸エビデンスを保存しました");
             switchTab('album');
+        }
+
+        // ================= PINCH ZOOM & PAN LOGIC =================
+        function setupPinchZoom(containerId, applyTransformCallback) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+
+            let touchStartDist = 0;
+            let startScale = 1;
+            let isDragging = false;
+            let dragStart = { x: 0, y: 0 };
+
+            el.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 2) {
+                    touchStartDist = Math.hypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                    );
+                    startScale = containerId === 'cameraZoomContainer' ? cameraZoomScale :
+                                 containerId === 'recordForm' ? formZoomScale : detailZoomScale;
+                } else if (e.touches.length === 1) {
+                    const currentScale = containerId === 'cameraZoomContainer' ? cameraZoomScale :
+                                         containerId === 'recordForm' ? formZoomScale : detailZoomScale;
+                    if (currentScale > 1) {
+                        isDragging = true;
+                        dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                    }
+                }
+            }, { passive: true });
+
+            el.addEventListener('touchmove', (e) => {
+                if (e.touches.length === 2 && touchStartDist > 0) {
+                    const dist = Math.hypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                    );
+                    const factor = dist / touchStartDist;
+                    let newScale = Math.min(Math.max(startScale * factor, 1.0), 4.0);
+                    applyTransformCallback(newScale, null);
+                } else if (e.touches.length === 1 && isDragging) {
+                    const dx = e.touches[0].clientX - dragStart.x;
+                    const dy = e.touches[0].clientY - dragStart.y;
+                    dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                    applyTransformCallback(null, { dx, dy });
+                }
+            }, { passive: true });
+
+            el.addEventListener('touchend', (e) => {
+                if (e.touches.length < 2) touchStartDist = 0;
+                if (e.touches.length === 0) isDragging = false;
+            });
+        }
+
+        function applyCameraZoomTransform(scale, panDelta) {
+            if (scale !== null) cameraZoomScale = scale;
+            if (panDelta) {
+                cameraZoomPan.x += panDelta.dx;
+                cameraZoomPan.y += panDelta.dy;
+            }
+            if (cameraZoomScale === 1) cameraZoomPan = { x: 0, y: 0 };
+
+            const video = document.getElementById('webcam');
+            const img = document.getElementById('capturedImage');
+            const badge = document.getElementById('cameraZoomBadge');
+
+            const transformStr = `scale(${cameraZoomScale}) translate(${cameraZoomPan.x / cameraZoomScale}px, ${cameraZoomPan.y / cameraZoomScale}px)`;
+            if (video) video.style.transform = transformStr;
+            if (img) img.style.transform = transformStr;
+
+            if (badge) {
+                if (cameraZoomScale > 1.05) {
+                    badge.classList.remove('hidden');
+                    badge.textContent = `${cameraZoomScale.toFixed(1)}x (リセット)`;
+                } else {
+                    badge.classList.add('hidden');
+                }
+            }
+        }
+
+        function resetCameraZoom() {
+            cameraZoomScale = 1;
+            cameraZoomPan = { x: 0, y: 0 };
+            applyCameraZoomTransform(1, null);
+        }
+
+        function applyFormZoomTransform(scale, panDelta) {
+            if (scale !== null) formZoomScale = scale;
+            if (panDelta) {
+                formZoomPan.x += panDelta.dx;
+                formZoomPan.y += panDelta.dy;
+            }
+            if (formZoomScale === 1) formZoomPan = { x: 0, y: 0 };
+
+            const form = document.getElementById('recordForm');
+            const badge = document.getElementById('formZoomBadge');
+
+            if (form) {
+                form.style.transformOrigin = 'top left';
+                form.style.transform = `scale(${formZoomScale}) translate(${formZoomPan.x / formZoomScale}px, ${formZoomPan.y / formZoomScale}px)`;
+            }
+
+            if (badge) {
+                if (formZoomScale > 1.05) {
+                    badge.classList.remove('hidden');
+                    badge.textContent = `${formZoomScale.toFixed(1)}x (リセット)`;
+                } else {
+                    badge.classList.add('hidden');
+                }
+            }
+        }
+
+        function resetFormZoom() {
+            formZoomScale = 1;
+            formZoomPan = { x: 0, y: 0 };
+            applyFormZoomTransform(1, null);
         }
 
         // ================= CHECKLIST MANAGEMENT =================
@@ -610,7 +757,7 @@
                                 `}
                             </div>
                             <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-slate-600 font-mono">
-                                <div><span class="text-slate-400 font-sans">品番:</span> ${escapeHtml(item.modelNo || '-')}</div>
+                                <div><span class="text-slate-400 font-sans">品番:</span> ${escapeHtml(item.modelNo || 'なし')}</div>
                                 <div><span class="text-slate-400 font-sans">場所:</span> ${escapeHtml(item.location)}</div>
                                 <div><span class="text-slate-400 font-sans">予定数:</span> <span class="font-semibold text-slate-800">${item.expectedQty} ${escapeHtml(item.unit || '個')}</span></div>
                             </div>
@@ -621,7 +768,7 @@
                             ${isDone ? `
                                 <button onclick="openDetailModal('${linkedRecord.id}')" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-sm flex items-center gap-1.5 transition">
                                     <i data-lucide="eye" class="w-4 h-4 text-emerald-600"></i>
-                                    <span>確認結果</span>
+                                    <span>エビデンス確認</span>
                                 </button>
                             ` : `
                                 <button onclick="selectItemToAudit('${item.id}')" class="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 shadow-sm transition">
@@ -653,7 +800,7 @@
             
             switchTab('register');
             startCamera();
-            showToast(`「${item.name}」の現物確認フォームに設定しました`);
+            showToast(`「${item.name}」の確認用フォームを設定しました`);
         }
 
         function importChecklistCSV(e) {
@@ -672,7 +819,7 @@
                     if (cols.length >= 2) {
                         newChecklist.push({
                             id: 'CHK-' + Date.now() + '-' + i,
-                            name: cols[0] || '物品名未設定',
+                            name: cols[0] || '無題物品',
                             modelNo: cols[1] || '',
                             location: cols[2] || '',
                             expectedQty: parseFloat(cols[3]) || 1,
@@ -695,7 +842,6 @@
         }
 
         function clearChecklist() {
-            if (!confirm('棚卸確認リストを全消去しますか？')) return;
             checklist = [];
             localStorage.removeItem(CHECKLIST_KEY);
             renderChecklist();
@@ -753,7 +899,7 @@
                 lucide.createIcons();
             } catch (err) {
                 console.error("Camera Access Error:", err);
-                showToast("カメラを起動できませんでした。ブラウザのカメラ使用許可を確認してください。", true);
+                showToast("カメラへのアクセスが拒否されたか利用できません", true);
             }
         }
 
@@ -785,7 +931,8 @@
 
             cameraStatus.textContent = 'カメラ停止中';
             cameraStatus.className = 'text-xs px-2.5 py-1 bg-slate-100 text-slate-500 rounded-full font-medium';
-            
+
+            resetCameraZoom();
             lucide.createIcons();
         }
 
@@ -921,6 +1068,42 @@
             });
         }
 
+        function transformPhoto(index, type) {
+            const src = capturedImageDataUrls[index];
+            if (!src) return;
+
+            const img = new Image();
+            img.onload = function() {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+
+                if (type === 'rotate') {
+                    canvas.width = img.height;
+                    canvas.height = img.width;
+                    ctx.translate(canvas.width / 2, canvas.height / 2);
+                    ctx.rotate(90 * Math.PI / 180);
+                    ctx.drawImage(img, -img.width / 2, -img.height / 2);
+                } else if (type === 'flipV') {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.translate(0, canvas.height);
+                    ctx.scale(1, -1);
+                    ctx.drawImage(img, 0, 0);
+                } else if (type === 'flipH') {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.translate(canvas.width, 0);
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(img, 0, 0);
+                }
+
+                capturedImageDataUrls[index] = canvas.toDataURL('image/jpeg', 0.65);
+                renderFormPhotoThumbnails();
+                showToast('写真を回転・補正しました');
+            };
+            img.src = src;
+        }
+
         function renderFormPhotoThumbnails() {
             const container = document.getElementById('formPhotoThumbnails');
             const countBadge = document.getElementById('photoCountBadge');
@@ -941,78 +1124,29 @@
             capturedImage.classList.remove('hidden');
 
             container.innerHTML = capturedImageDataUrls.map((url, idx) => `
-                <div class="flex flex-col items-center gap-1 bg-white p-1.5 rounded-xl border border-slate-200 shadow-sm">
-                    <div class="relative w-20 h-20 rounded-lg overflow-hidden border border-slate-300 group shadow-inner bg-slate-900">
+                <div class="flex flex-col items-center gap-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
+                    <div class="relative w-16 h-16 rounded-lg overflow-hidden bg-slate-800">
                         <img src="${url}" class="w-full h-full object-cover">
-                        <span class="absolute top-0.5 left-0.5 text-[9px] bg-slate-900/80 text-white px-1.5 py-0.5 rounded font-mono font-bold">${idx + 1}</span>
-                        <button type="button" onclick="removeFormPhoto(${idx})" class="absolute top-0.5 right-0.5 bg-red-600/90 text-white rounded-full p-1 hover:bg-red-700 transition" title="削除">
+                        <span class="absolute top-0.5 left-0.5 text-[9px] bg-slate-900/80 text-white px-1 rounded font-mono">${idx + 1}</span>
+                        <button type="button" onclick="removeFormPhoto(${idx})" class="absolute top-0.5 right-0.5 bg-red-600/90 text-white rounded-full p-0.5 hover:bg-red-700 transition">
                             <i data-lucide="x" class="w-3 h-3"></i>
                         </button>
                     </div>
-                    <div class="flex items-center gap-1 pt-0.5">
-                        <button type="button" onclick="rotateFormPhoto(${idx}, 90)" class="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md transition text-xs flex items-center justify-center" title="時計回りに90度回転">
-                            <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
+                    <div class="flex items-center gap-1">
+                        <button type="button" onclick="transformPhoto(${idx}, 'rotate')" class="p-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded" title="90度回転">
+                            <i data-lucide="rotate-cw" class="w-3 h-3"></i>
                         </button>
-                        <button type="button" onclick="flipFormPhoto(${idx}, 'v')" class="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md transition text-xs flex items-center justify-center" title="上下反転">
-                            <i data-lucide="arrow-up-down" class="w-3.5 h-3.5"></i>
+                        <button type="button" onclick="transformPhoto(${idx}, 'flipV')" class="p-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded" title="上下反転">
+                            <i data-lucide="arrow-up-down" class="w-3 h-3"></i>
                         </button>
-                        <button type="button" onclick="flipFormPhoto(${idx}, 'h')" class="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md transition text-xs flex items-center justify-center" title="左右反転">
-                            <i data-lucide="arrow-left-right" class="w-3.5 h-3.5"></i>
+                        <button type="button" onclick="transformPhoto(${idx}, 'flipH')" class="p-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded" title="左右反転">
+                            <i data-lucide="arrow-left-right" class="w-3 h-3"></i>
                         </button>
                     </div>
                 </div>
             `).join('');
 
             lucide.createIcons();
-        }
-
-        function rotateFormPhoto(index, degrees) {
-            const img = new Image();
-            img.onload = function() {
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-
-                if (degrees === 90 || degrees === 270) {
-                    canvas.width = img.height;
-                    canvas.height = img.width;
-                } else {
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                }
-
-                ctx.translate(canvas.width / 2, canvas.height / 2);
-                ctx.rotate((degrees * Math.PI) / 180);
-                ctx.drawImage(img, -img.width / 2, -img.height / 2);
-
-                capturedImageDataUrls[index] = canvas.toDataURL('image/jpeg', 0.65);
-                renderFormPhotoThumbnails();
-                showToast("写真を回転補正しました");
-            };
-            img.src = capturedImageDataUrls[index];
-        }
-
-        function flipFormPhoto(index, direction) {
-            const img = new Image();
-            img.onload = function() {
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-
-                canvas.width = img.width;
-                canvas.height = img.height;
-
-                ctx.translate(canvas.width / 2, canvas.height / 2);
-                if (direction === 'h') {
-                    ctx.scale(-1, 1);
-                } else if (direction === 'v') {
-                    ctx.scale(1, -1);
-                }
-                ctx.drawImage(img, -img.width / 2, -img.height / 2);
-
-                capturedImageDataUrls[index] = canvas.toDataURL('image/jpeg', 0.65);
-                renderFormPhotoThumbnails();
-                showToast(direction === 'v' ? "写真を上下反転補正しました" : "写真を左右反転補正しました");
-            };
-            img.src = capturedImageDataUrls[index];
         }
 
         function removeFormPhoto(index) {
@@ -1072,6 +1206,7 @@
             currentTargetChecklistId = null;
             document.getElementById('linkedItemBadge').classList.add('hidden');
             renderFormPhotoThumbnails();
+            resetFormZoom();
             document.getElementById('itemAuditDate').value = new Date().toISOString().split('T')[0];
             document.getElementById('itemQuantity').value = 1;
             document.getElementById('itemUnit').value = '個';
@@ -1174,8 +1309,8 @@
             const modalContent = document.getElementById('modalContent');
             modalContent.innerHTML = `
                 <div class="space-y-2">
-                    <div class="w-full aspect-[4/3] bg-slate-900 rounded-xl overflow-hidden shadow-inner flex items-center justify-center">
-                        <img id="detailMainImg" src="${photos[0]}" class="w-full h-full object-contain" alt="拡大画像">
+                    <div class="w-full aspect-[4/3] bg-slate-900 rounded-xl overflow-hidden shadow-inner flex items-center justify-center zoom-touch-area" id="detailZoomContainer">
+                        <img id="detailMainImg" src="${photos[0]}" class="w-full h-full object-contain transition-transform duration-75 origin-center" alt="拡大画像">
                     </div>
                     ${photos.length > 1 ? `
                         <div class="flex items-center gap-2 overflow-x-auto pb-1">
@@ -1226,6 +1361,19 @@
             `;
 
             document.getElementById('detailModal').classList.remove('hidden');
+            setupPinchZoom('detailZoomContainer', (scale, panDelta) => {
+                if (scale !== null) detailZoomScale = scale;
+                if (panDelta) {
+                    detailZoomPan.x += panDelta.dx;
+                    detailZoomPan.y += panDelta.dy;
+                }
+                if (detailZoomScale === 1) detailZoomPan = { x: 0, y: 0 };
+
+                const img = document.getElementById('detailMainImg');
+                if (img) {
+                    img.style.transform = `scale(${detailZoomScale}) translate(${detailZoomPan.x / detailZoomScale}px, ${detailZoomPan.y / detailZoomScale}px)`;
+                }
+            });
             lucide.createIcons();
         }
 
@@ -1355,7 +1503,7 @@
         function deleteRecord(id) {
             if (!confirm('このエビデンス記録を削除しますか？')) return;
             records = records.filter(r => r.id !== id);
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+            saveRecordsToStorage();
             renderAlbum();
             updateCountBadge();
             showToast("削除しました");
