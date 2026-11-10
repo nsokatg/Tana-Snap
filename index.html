@@ -517,6 +517,12 @@
                     </span>
                     <i data-lucide="chevron-right" class="w-5 h-5 opacity-70"></i>
                 </button>
+                <button onclick="showJsonCopyModalDirect()" class="w-full py-3 px-4 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-xl flex items-center justify-between transition">
+                    <span class="flex items-center gap-2">
+                        <i data-lucide="copy" class="w-5 h-5"></i> データをテキストコピー (メール送信用)
+                    </span>
+                    <i data-lucide="chevron-right" class="w-5 h-5 opacity-70"></i>
+                </button>
             </div>
         </div>
     </div>
@@ -1503,6 +1509,15 @@
             textarea.value = jsonString;
             modal.classList.remove('hidden');
             lucide.createIcons();
+        }
+
+        function showJsonCopyModalDirect() {
+            if (records.length === 0) {
+                showToast("出力するデータがありません", true);
+                return;
+            }
+            const jsonString = JSON.stringify(records, null, 2);
+            showJsonCopyModal(jsonString);
         }
 
         function copyJsonTextToClipboard() {
